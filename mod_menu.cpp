@@ -117,16 +117,18 @@ static int32_t hook_getEvent(AInputQueue *q, AInputEvent **ev) {
 }
 
 // ---- Entry point: runs when the game loads the library ----
+struct AnyPtr {
+    void *p;
+    template <class T> operator T() const { return (T) p; }
+};
+
 static void *MainThread(void *) {
     sleep(5);   // let the game finish starting up
     void *egl = DobbySymbolResolver("libEGL.so", "eglSwapBuffers");
-    if (egl) DobbyHook(egl, (void *) hook_eglSwapBuffers, (void **) &old_eglSwapBuffers);
+    if (egl) DobbyHook(egl, AnyPtr{(void *) hook_eglSwapBuffers}, AnyPtr{(void *) &old_eglSwapBuffers});
     void *inp = DobbySymbolResolver("libandroid.so", "AInputQueue_getEvent");
-    if (inp) DobbyHook(inp, (void *) hook_getEvent, (void **) &old_getEvent);
+    if (inp) DobbyHook(inp, AnyPtr{(void *) hook_getEvent}, AnyPtr{(void *) &old_getEvent});
     LOG("hooks installed (egl=%p input=%p)", egl, inp);
-
-    // TODO (game specific): hook your game functions here and read Cfg::godMode etc.
-    // IL2CPP example: DobbyHook((void*)(il2cppBase + 0xRVA), (void*)my_TakeDamage, (void**)&old_TakeDamage);
     return nullptr;
 }
 
