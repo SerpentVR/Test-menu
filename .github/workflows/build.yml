@@ -11,10 +11,9 @@ jobs:
           git clone --depth 1 https://github.com/jmpews/Dobby dobby_src
       - name: Patch Dobby for Android
         run: |
-          F=dobby_src/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm
-          sed -i -E '/^[[:space:]]*adrp[[:space:]]+x17,[[:space:]]*common_closure_bridge_handler/c\    adrp x17, common_closure_bridge_handler' $F
-          sed -i -E '/^[[:space:]]*add[[:space:]]+x17,[[:space:]]*x17,[[:space:]]*common_closure_bridge_handler/c\    add x17, x17, :lo12:common_closure_bridge_handler' $F
-          grep -n "common_closure_bridge_handler" $F
+          D=dobby_src/source/TrampolineBridge/ClosureTrampolineBridge/arm64
+          sed -i -E 's/(cdecl\([A-Za-z0-9_]+\))@PAGEOFF/:lo12:\1/g; s/(cdecl\([A-Za-z0-9_]+\))@PAGE/\1/g' $D/*.asm
+          grep -n "common_closure_bridge_handler" $D/closure_bridge_arm64.asm
       - name: Build (arm64-v8a)
         run: |
           cmake -S . -B build-arm64 \
