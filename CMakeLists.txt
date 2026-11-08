@@ -3,11 +3,11 @@ project(ModMenu)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# imgui/ and dobby_src/ are downloaded by the GitHub workflow (or clone them yourself)
 set(IMGUI ${CMAKE_SOURCE_DIR}/imgui)
 set(DOBBY_GENERATE_SHARED OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/dobby_src dobby_build)
 
+add_definitions(-DIMGUI_IMPL_OPENGL_ES3)
 include_directories(${IMGUI} ${CMAKE_SOURCE_DIR}/dobby_src/include)
 
 add_library(ModMenu SHARED
