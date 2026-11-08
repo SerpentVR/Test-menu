@@ -123,15 +123,15 @@ struct AnyPtr {
     template <class T> operator T() const { return (T) p; }
 };
 
-static void *MainThread(void *) {
-    sleep(5);   // let the game finish starting up
-    void *egl = DobbySymbolResolver("libEGL.so", "eglSwapBuffers");
-    if (egl) DobbyHook(egl, AnyPtr{(void *) hook_eglSwapBuffers}, AnyPtr{(void *) &old_eglSwapBuffers});
-    void *inp = DobbySymbolResolver("libandroid.so", "AInputQueue_getEvent");
-    if (inp) DobbyHook(inp, AnyPtr{(void *) hook_getEvent}, AnyPtr{(void *) &old_getEvent});
-    LOG("hooks installed (egl=%p input=%p)", egl, inp);
-    return nullptr;
-}
+   static void *MainThread(void *) {
+       sleep(5);   // let the game finish starting up
+       void *egl = dlsym(dlopen("libEGL.so", RTLD_NOW), "eglSwapBuffers");
+       if (egl) A64HookFunction(egl, (void *) hook_eglSwapBuffers, (void **) &old_eglSwapBuffers);
+       void *inp = dlsym(dlopen("libandroid.so", RTLD_NOW), "AInputQueue_getEvent");
+       if (inp) A64HookFunction(inp, (void *) hook_getEvent, (void **) &old_getEvent);
+       LOG("hooks installed (egl=%p input=%p)", egl, inp);
+       return nullptr;
+   }
 
 __attribute__((constructor))
 static void OnLoad() {
