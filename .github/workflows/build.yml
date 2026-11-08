@@ -9,6 +9,11 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ocornut/imgui imgui
           git clone --depth 1 https://github.com/jmpews/Dobby dobby_src
+      - name: Patch Dobby for Android
+        run: |
+          F=dobby_src/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm
+          sed -i -E 's/([A-Za-z0-9_]+)@PAGEOFF/:lo12:\1/g; s/@PAGE//g' $F
+          grep -n "adrp\|lo12" $F || true
       - name: Build (arm64-v8a)
         run: |
           cmake -S . -B build-arm64 \
