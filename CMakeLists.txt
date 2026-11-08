@@ -4,18 +4,18 @@ project(ModMenu)
 set(CMAKE_CXX_STANDARD 17)
 
 set(IMGUI ${CMAKE_SOURCE_DIR}/imgui)
-set(DOBBY_GENERATE_SHARED OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_SOURCE_DIR}/dobby_src dobby_build)
+set(HOOK ${CMAKE_SOURCE_DIR}/hooklib)
 
 add_definitions(-DIMGUI_IMPL_OPENGL_ES3)
-include_directories(${IMGUI} ${CMAKE_SOURCE_DIR}/dobby_src/include)
+include_directories(${IMGUI} ${HOOK})
 
 add_library(ModMenu SHARED
     mod_menu.cpp
+    ${HOOK}/And64InlineHook.cpp
     ${IMGUI}/imgui.cpp
     ${IMGUI}/imgui_draw.cpp
     ${IMGUI}/imgui_tables.cpp
     ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_opengl3.cpp)
 
-target_link_libraries(ModMenu dobby log android EGL GLESv3)
+target_link_libraries(ModMenu log android EGL GLESv3)
