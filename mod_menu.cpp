@@ -9,7 +9,8 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
-#include "dobby.h"
+   #include <dlfcn.h>
+   #include "And64InlineHook.hpp"
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "ModMenu", __VA_ARGS__)
 
