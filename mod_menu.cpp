@@ -1,142 +1,133 @@
-// Native mod menu (ImGui) -> builds to libModMenu.so
-// Needs: Dear ImGui sources (imgui/, with backends/imgui_impl_opengl3.*) and Dobby (dobby.h + libdobby.a)
-#include <jni.h>
+// Runtime IL2CPP dumper -> libModMenu.so
+// When the game runs, this writes il2cpp_dump.txt (class, field and method names + addresses)
+// into the game's own files folder. No PC needed.
 #include <pthread.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <sys/stat.h>
+#include <string>
 #include <android/log.h>
-#include <android/input.h>
-#include <EGL/egl.h>
-#include <GLES3/gl3.h>
-#include "imgui.h"
-#include "backends/imgui_impl_opengl3.h"
-   #include <dlfcn.h>
-   #include "And64InlineHook.hpp"
 
-#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "ModMenu", __VA_ARGS__)
+#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "ModDump", __VA_ARGS__)
+#define S(x) ((x) ? (x) : "")
 
-// ---- Menu state: read these from your game hooks ----
-namespace Cfg {
-    bool godMode = false, infAmmo = false, noRecoil = false, esp = false, noclip = false;
-    float speed = 1.0f, jump = 1.0f, fov = 90.0f;
-    bool open = false;
+typedef void *(*fn_domain_get)();
+typedef void *(*fn_thread_attach)(void *);
+typedef void **(*fn_get_assemblies)(void *, size_t *);
+typedef void *(*fn_asm_image)(void *);
+typedef const char *(*fn_name_of)(void *);
+typedef size_t (*fn_class_count)(void *);
+typedef void *(*fn_image_class)(void *, size_t);
+typedef void *(*fn_iter)(void *, void **);
+typedef uint32_t (*fn_param_count)(void *);
+typedef size_t (*fn_field_offset)(void *);
+
+static void mkdirs(const std::string &p) {
+    for (size_t i = 1; i < p.size(); i++)
+        if (p[i] == '/') mkdir(p.substr(0, i).c_str(), 0777);
+    mkdir(p.c_str(), 0777);
 }
 
-static bool g_init = false;
-static int g_w = 0, g_h = 0;
-static float g_touchX = 0, g_touchY = 0;
-static bool g_touchDown = false;
+static std::string pkgName() {
+    char buf[256] = {0};
+    FILE *f = fopen("/proc/self/cmdline", "r");
+    if (f) { size_t n = fread(buf, 1, sizeof(buf) - 1, f); (void) n; fclose(f); }
+    return std::string(buf);
+}
 
-// ---- Menu drawing ----
-static void DrawMenu() {
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
+static void *DumpThread(void *) {
+    // Wait for the game to load its il2cpp library
+    void *lib = nullptr;
+    for (int i = 0; i < 300 && !lib; i++) {
+        lib = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!lib) sleep(1);
+    }
+    if (!lib) { LOG("libil2cpp.so not found"); return nullptr; }
+    sleep(25);  // let the game finish starting up
 
-    if (!Cfg::open) {                       // collapsed: small floating button
-        ImGui::SetNextWindowSize(ImVec2(0, 0));
-        ImGui::Begin("##icon", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
-        if (ImGui::Button("MOD", ImVec2(110, 90))) Cfg::open = true;
-        ImGui::End();
-        return;
+    auto domain_get      = (fn_domain_get)      dlsym(lib, "il2cpp_domain_get");
+    auto thread_attach   = (fn_thread_attach)   dlsym(lib, "il2cpp_thread_attach");
+    auto get_assemblies  = (fn_get_assemblies)  dlsym(lib, "il2cpp_domain_get_assemblies");
+    auto asm_image       = (fn_asm_image)       dlsym(lib, "il2cpp_assembly_get_image");
+    auto image_name      = (fn_name_of)         dlsym(lib, "il2cpp_image_get_name");
+    auto image_classes   = (fn_class_count)     dlsym(lib, "il2cpp_image_get_class_count");
+    auto image_class     = (fn_image_class)     dlsym(lib, "il2cpp_image_get_class");
+    auto class_name      = (fn_name_of)         dlsym(lib, "il2cpp_class_get_name");
+    auto class_ns        = (fn_name_of)         dlsym(lib, "il2cpp_class_get_namespace");
+    auto class_methods   = (fn_iter)            dlsym(lib, "il2cpp_class_get_methods");
+    auto class_fields    = (fn_iter)            dlsym(lib, "il2cpp_class_get_fields");
+    auto method_name     = (fn_name_of)         dlsym(lib, "il2cpp_method_get_name");
+    auto method_params   = (fn_param_count)     dlsym(lib, "il2cpp_method_get_param_count");
+    auto field_name      = (fn_name_of)         dlsym(lib, "il2cpp_field_get_name");
+    auto field_offset    = (fn_field_offset)    dlsym(lib, "il2cpp_field_get_offset");
+
+    if (!domain_get || !thread_attach || !get_assemblies || !asm_image || !image_name ||
+        !image_classes || !image_class || !class_name || !class_ns || !class_methods ||
+        !class_fields || !method_name || !method_params || !field_name || !field_offset) {
+        LOG("some il2cpp functions are missing");
+        return nullptr;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(g_w * 0.42f, g_h * 0.65f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("GTH MOD MENU", &Cfg::open);
-    if (ImGui::BeginTabBar("tabs")) {
-        if (ImGui::BeginTabItem("Player")) {
-            ImGui::Checkbox("God Mode", &Cfg::godMode);
-            ImGui::Checkbox("Infinite Ammo", &Cfg::infAmmo);
-            ImGui::Checkbox("No Recoil", &Cfg::noRecoil);
-            ImGui::SliderFloat("Speed", &Cfg::speed, 1.f, 5.f);
-            ImGui::SliderFloat("Jump", &Cfg::jump, 1.f, 5.f);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Visual")) {
-            ImGui::Checkbox("ESP Boxes", &Cfg::esp);
-            ImGui::SliderFloat("FOV", &Cfg::fov, 60.f, 120.f);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Misc")) {
-            ImGui::Checkbox("Noclip", &Cfg::noclip);
-            if (ImGui::Button("Reset All", ImVec2(-1, 80))) {
-                Cfg::godMode = Cfg::infAmmo = Cfg::noRecoil = Cfg::esp = Cfg::noclip = false;
-                Cfg::speed = Cfg::jump = 1.f; Cfg::fov = 90.f;
+    void *domain = domain_get();
+    thread_attach(domain);
+
+    Dl_info info;
+    dladdr((void *) domain_get, &info);
+    uintptr_t base = (uintptr_t) info.dli_fbase;
+
+    std::string pkg = pkgName();
+    std::string dir = "/sdcard/Android/data/" + pkg + "/files";
+    mkdirs(dir);
+    std::string path = dir + "/il2cpp_dump.txt";
+    FILE *out = fopen(path.c_str(), "w");
+    if (!out) {
+        dir = "/data/data/" + pkg + "/files";
+        mkdirs(dir);
+        path = dir + "/il2cpp_dump.txt";
+        out = fopen(path.c_str(), "w");
+    }
+    if (!out) { LOG("cannot open output file"); return nullptr; }
+    LOG("writing dump to %s", path.c_str());
+
+    size_t asmCount = 0;
+    void **assemblies = get_assemblies(domain, &asmCount);
+    for (size_t a = 0; a < asmCount; a++) {
+        void *image = asm_image(assemblies[a]);
+        const char *iname = S(image_name(image));
+        if (!strstr(iname, "Assembly-CSharp")) continue;   // only the game's own code
+        fprintf(out, "// ===== %s =====\n", iname);
+
+        size_t cc = image_classes(image);
+        for (size_t c = 0; c < cc; c++) {
+            void *k = image_class(image, c);
+            fprintf(out, "\nclass %s.%s\n", S(class_ns(k)), S(class_name(k)));
+
+            void *it = nullptr;
+            void *f;
+            while ((f = class_fields(k, &it)))
+                fprintf(out, "  field %s  offset=0x%zx\n", S(field_name(f)), field_offset(f));
+
+            it = nullptr;
+            void *m;
+            while ((m = class_methods(k, &it))) {
+                void *fp = *(void **) m;   // first field of a MethodInfo is the code address
+                size_t rva = fp ? (size_t) ((uintptr_t) fp - base) : 0;
+                fprintf(out, "  method %s(%u)  rva=0x%zx\n", S(method_name(m)), method_params(m), rva);
             }
-            ImGui::EndTabItem();
         }
-        ImGui::EndTabBar();
+        fflush(out);
     }
-    ImGui::End();
+    fprintf(out, "\n// DONE\n");
+    fclose(out);
+    LOG("dump finished");
+    return nullptr;
 }
-
-// ---- Render hook (draws the menu on top of the game every frame) ----
-static EGLBoolean (*old_eglSwapBuffers)(EGLDisplay, EGLSurface) = nullptr;
-
-static EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf) {
-    eglQuerySurface(dpy, surf, EGL_WIDTH, &g_w);
-    eglQuerySurface(dpy, surf, EGL_HEIGHT, &g_h);
-    if (g_w < 100 || g_h < 100) return old_eglSwapBuffers(dpy, surf);
-
-    if (!g_init) {
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO &io = ImGui::GetIO();
-        io.IniFilename = nullptr;
-        ImGui::StyleColorsDark();
-        ImGui::GetStyle().ScaleAllSizes(3.0f);          // bigger for touchscreens
-        io.FontGlobalScale = 3.0f;
-        ImGui_ImplOpenGL3_Init("#version 300 es");
-        g_init = true;
-        LOG("ImGui ready %dx%d", g_w, g_h);
-    }
-
-    ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2((float) g_w, (float) g_h);
-    io.AddMousePosEvent(g_touchX, g_touchY);
-    io.AddMouseButtonEvent(0, g_touchDown);
-
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui::NewFrame();
-    DrawMenu();
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    return old_eglSwapBuffers(dpy, surf);
-}
-
-// ---- Touch input hook ----
-// Works for games that read input through the NDK input queue.
-// Unity/other engines may route touches differently (see notes).
-static int32_t (*old_getEvent)(AInputQueue *, AInputEvent **) = nullptr;
-
-static int32_t hook_getEvent(AInputQueue *q, AInputEvent **ev) {
-    int32_t r = old_getEvent(q, ev);
-    if (r >= 0 && ev && *ev && AInputEvent_getType(*ev) == AINPUT_EVENT_TYPE_MOTION) {
-        int32_t act = AMotionEvent_getAction(*ev) & AMOTION_EVENT_ACTION_MASK;
-        g_touchX = AMotionEvent_getX(*ev, 0);
-        g_touchY = AMotionEvent_getY(*ev, 0);
-        g_touchDown = (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_MOVE);
-    }
-    return r;
-}
-
-// ---- Entry point: runs when the game loads the library ----
-struct AnyPtr {
-    void *p;
-    template <class T> operator T() const { return (T) p; }
-};
-
-   static void *MainThread(void *) {
-       sleep(5);   // let the game finish starting up
-       void *egl = dlsym(dlopen("libEGL.so", RTLD_NOW), "eglSwapBuffers");
-       if (egl) A64HookFunction(egl, (void *) hook_eglSwapBuffers, (void **) &old_eglSwapBuffers);
-       void *inp = dlsym(dlopen("libandroid.so", RTLD_NOW), "AInputQueue_getEvent");
-       if (inp) A64HookFunction(inp, (void *) hook_getEvent, (void **) &old_getEvent);
-       LOG("hooks installed (egl=%p input=%p)", egl, inp);
-       return nullptr;
-   }
 
 __attribute__((constructor))
 static void OnLoad() {
     pthread_t t;
-    pthread_create(&t, nullptr, MainThread, nullptr);
+    pthread_create(&t, nullptr, DumpThread, nullptr);
 }
-
-extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *, void *) { return JNI_VERSION_1_6; }
